@@ -79,12 +79,10 @@ const getMockHotels = (locationName) => {
 };
 
 const BookingService = {
-  // Accessing Env Var directly
   apiKey: import.meta.env.VITE_RAPIDAPI_KEY, 
   host: "booking-com.p.rapidapi.com",
 
   async searchHotels(locationName) {
-    // Failsafe: If apiKey is missing or invalid, use Mock Data immediately.
     if (!this.apiKey) {
       console.warn("⚠️ No Booking API Key found. Returning Mock Data.");
       await new Promise(r => setTimeout(r, 800)); 
@@ -92,7 +90,6 @@ const BookingService = {
     }
 
     try {
-      // Step A: Get Location ID
       const locationResp = await fetch(`https://${this.host}/v1/hotels/locations?name=${locationName}&locale=en-gb`, {
         method: 'GET',
         headers: { 'X-RapidAPI-Key': this.apiKey, 'X-RapidAPI-Host': this.host }
@@ -106,7 +103,6 @@ const BookingService = {
       const destId = locData[0].dest_id;
       const searchType = locData[0].dest_type;
 
-      // Step B: Get Hotels (Dates fixed to avoid 422 error)
       const d1 = new Date();
       d1.setDate(d1.getDate() + 1); // Start Tomorrow
       const arrivalDate = d1.toISOString().split('T')[0];
@@ -125,7 +121,6 @@ const BookingService = {
       
       if (!searchData.result) return getMockHotels(locationName); 
 
-      // Transform Real Data
       return searchData.result.map(h => ({
         id: h.hotel_id,
         name: h.hotel_name,
