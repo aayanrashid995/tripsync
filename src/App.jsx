@@ -16,9 +16,8 @@ import {
   Plane, Calendar, CreditCard, MessageCircle, MapPin, 
   Users, Plus, LogOut, Share2, DollarSign, Check, 
   Clock, Trash2, ChevronLeft, Send, Home, Hotel,
-  X, AlertCircle, Sparkles, Pencil, MoreVertical, 
-  Camera, FileText, ThumbsUp, MessageSquare, ExternalLink,
-  Bot
+  X, AlertCircle, Pencil, MoreVertical, 
+  Camera, FileText, ThumbsUp, MessageSquare, ExternalLink
 } from 'lucide-react';
 
 /**
@@ -67,24 +66,26 @@ if (USE_FIREBASE) {
 
 /**
  * ------------------------------------------------------------------
- * 2. ROBUST SERVICES (Booking.com & Gemini AI)
+ * 2. BOOKING.COM SERVICE (With Failsafe & Links)
  * ------------------------------------------------------------------
  */
 
-// MOCK DATA GENERATOR (Used as Failsafe)
+// MOCK DATA GENERATOR (Used if API Key is missing or fails)
 const getMockHotels = (locationName) => {
   const isThai = locationName.toLowerCase().includes('thai') || locationName.toLowerCase().includes('bangkok');
+  
+  // Real links to Booking.com pages for demo purposes
   if (isThai) {
     return [
-      { id: 101, name: "Grand Hyatt Erawan Bangkok", price: "180", rating: 9.1, image: "https://images.unsplash.com/photo-1582719508461-905c673771fd?auto=format&fit=crop&w=800&q=80", url: "#", amenities: "Pool, Spa" },
-      { id: 102, name: "Sala Rattanakosin", price: "120", rating: 8.8, image: "https://images.unsplash.com/photo-1520250497591-112f2f40a3f4?auto=format&fit=crop&w=800&q=80", url: "#", amenities: "River View" },
-      { id: 103, name: "The Siam Hotel", price: "250", rating: 9.5, image: "https://images.unsplash.com/photo-1566073771259-6a8506099945?auto=format&fit=crop&w=800&q=80", url: "#", amenities: "Luxury" },
+      { id: 101, name: "Grand Hyatt Erawan Bangkok", price: "180", rating: 9.1, image: "https://images.unsplash.com/photo-1582719508461-905c673771fd?auto=format&fit=crop&w=800&q=80", url: "https://www.booking.com/hotel/th/grand-hyatt-erawan-bangkok.en-gb.html", amenities: "Pool, Spa" },
+      { id: 102, name: "Sala Rattanakosin", price: "120", rating: 8.8, image: "https://images.unsplash.com/photo-1520250497591-112f2f40a3f4?auto=format&fit=crop&w=800&q=80", url: "https://www.booking.com/hotel/th/sala-rattanakosin-bangkok.en-gb.html", amenities: "River View" },
+      { id: 103, name: "The Siam Hotel", price: "250", rating: 9.5, image: "https://images.unsplash.com/photo-1566073771259-6a8506099945?auto=format&fit=crop&w=800&q=80", url: "https://www.booking.com/hotel/th/the-siam.en-gb.html", amenities: "Luxury" },
     ];
   }
   return [
-    { id: 1, name: `Grand Plaza ${locationName}`, price: "150", rating: 8.5, image: "https://images.unsplash.com/photo-1566073771259-6a8506099945?auto=format&fit=crop&w=800&q=80", url: "#" },
-    { id: 2, name: `${locationName} City Inn`, price: "95", rating: 7.9, image: "https://images.unsplash.com/photo-1520250497591-112f2f40a3f4?auto=format&fit=crop&w=800&q=80", url: "#" },
-    { id: 3, name: "Sunset Resort", price: "210", rating: 9.2, image: "https://images.unsplash.com/photo-1582719508461-905c673771fd?auto=format&fit=crop&w=800&q=80", url: "#" },
+    { id: 1, name: `Grand Plaza ${locationName}`, price: "150", rating: 8.5, image: "https://images.unsplash.com/photo-1566073771259-6a8506099945?auto=format&fit=crop&w=800&q=80", url: "https://www.booking.com", amenities: "City Center" },
+    { id: 2, name: `${locationName} City Inn`, price: "95", rating: 7.9, image: "https://images.unsplash.com/photo-1520250497591-112f2f40a3f4?auto=format&fit=crop&w=800&q=80", url: "https://www.booking.com", amenities: "Budget Friendly" },
+    { id: 3, name: "Sunset Resort", price: "210", rating: 9.2, image: "https://images.unsplash.com/photo-1582719508461-905c673771fd?auto=format&fit=crop&w=800&q=80", url: "https://www.booking.com", amenities: "Beachfront" },
   ];
 };
 
@@ -141,7 +142,7 @@ const BookingService = {
         price: h.composite_price_breakdown?.gross_amount?.value?.toFixed(0) || "Check Price",
         rating: h.review_score || "N/A",
         image: h.max_photo_url || "https://via.placeholder.com/300",
-        url: h.url,
+        url: h.url, // This is the direct link to Booking.com
         amenities: "Free Wifi"
       }));
 
@@ -149,71 +150,6 @@ const BookingService = {
       // 2. FAILSAFE: If API crashes (403, 429, etc), return mock data
       console.error("⚠️ Real API Failed (Using Fallback):", error);
       return getMockHotels(locationName);
-    }
-  }
-};
-
-const GeminiService = {
-  async generateItinerary(destination, days = 3) {
-    const apiKey = getEnv('VITE_GEMINI_API_KEY'); 
-    
-    if (!apiKey) {
-        console.warn("Gemini API Key missing");
-        return [];
-    }
-
-    // Strict JSON prompt
-    const systemPrompt = `You are a travel assistant. Create a fun, realistic ${days}-day itinerary for ${destination}. 
-    Return strictly a JSON array of objects. Do not wrap in markdown code blocks. Each object must have: 
-    - "title" (short activity name)
-    - "time" (e.g. "10:00 AM")
-    - "description" (one sentence detail)
-    - "day" (number 1 to ${days})
-    Generate about 2-3 activities per day.`;
-
-    try {
-      // Using Stable Model 'gemini-1.5-flash'
-      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ contents: [{ parts: [{ text: systemPrompt }] }] })
-      });
-      
-      if (!response.ok) throw new Error(`Gemini API Error: ${response.status}`);
-
-      const data = await response.json();
-      let text = data.candidates?.[0]?.content?.parts?.[0]?.text || "[]";
-      
-      // Sanitizing response to ensure valid JSON
-      text = text.replace(/```json/g, '').replace(/```/g, '').trim();
-      return JSON.parse(text);
-    } catch (error) {
-      console.error("Gemini Error:", error);
-      throw new Error("Failed to generate itinerary. Check API Key.");
-    }
-  },
-
-  async summarizeChat(messages) {
-    const apiKey = getEnv('VITE_GEMINI_API_KEY'); 
-    if (messages.length === 0) return "No messages to summarize.";
-    if (!apiKey) return "AI Summary unavailable (Key missing)";
-
-    const chatLog = messages.map(m => `${m.senderName}: ${m.text}`).join("\n");
-    const prompt = `You are a travel assistant reading a group chat. Summarize the key travel plans, decisions, and action items in 3 short bullet points. Do not use markdown formatting like ** or *. Just plain text bullets.\n\n${chatLog}`;
-
-    try {
-      // Using Stable Model 'gemini-1.5-flash'
-      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] })
-      });
-      
-      const data = await response.json();
-      return data.candidates?.[0]?.content?.parts?.[0]?.text;
-    } catch (error) {
-      console.error("Gemini Summary Error:", error);
-      return "Unable to summarize at this time.";
     }
   }
 };
@@ -603,7 +539,6 @@ const TripSyncUltimate = () => {
     
     // Chat States
     const [newMessage, setNewMessage] = useState('');
-    const [aiSummary, setAiSummary] = useState(null);
     const chatEndRef = useRef(null);
 
     useEffect(() => {
@@ -677,18 +612,6 @@ const TripSyncUltimate = () => {
       }
     };
 
-    const handleGenerateSummary = async () => {
-      setLoading(true);
-      try {
-        const summary = await GeminiService.summarizeChat(messages);
-        setAiSummary(summary);
-      } catch (e) {
-        showToast("Summary failed", "error");
-      } finally {
-        setLoading(false);
-      }
-    };
-
     // ... (TimelineTab, ExpensesTab remain mostly same) ...
     const TimelineTab = () => (
       <div className="p-4 space-y-4 pb-24 h-[calc(100vh-140px)] overflow-y-auto">
@@ -699,14 +622,8 @@ const TripSyncUltimate = () => {
         
         {itinerary.length === 0 ? (
           <div className="text-center py-10">
-            <Sparkles className="w-12 h-12 text-purple-400 mx-auto mb-3" />
             <p className="text-gray-500 mb-4">No plans yet.</p>
-            <button onClick={async () => {
-              setLoading(true);
-              const items = await GeminiService.generateItinerary(activeTrip.destination, activeTrip.days || 3);
-              items.forEach(i => StorageService.addItem("itinerary", { ...i, tripId: activeTrip.id, votes: [], comments: [] }));
-              setLoading(false);
-            }} className="bg-purple-600 text-white px-6 py-3 rounded-xl font-bold shadow-lg">{loading ? <LoadingSpinner/> : 'Auto-Generate with AI'}</button>
+            <button onClick={() => setActivityModal(true)} className="bg-purple-600 text-white px-6 py-3 rounded-xl font-bold shadow-lg">Add First Activity</button>
           </div>
         ) : (
           itinerary.map((item) => (
@@ -868,9 +785,6 @@ const TripSyncUltimate = () => {
       <div className="flex flex-col h-[calc(100vh-140px)] bg-gray-50 relative">
         <div className="flex justify-between items-center p-4 bg-white border-b border-gray-100 sticky top-0 z-10">
           <h2 className="font-bold text-lg">Group Chat</h2>
-          <button onClick={handleGenerateSummary} className="bg-purple-100 text-purple-600 px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1">
-            <Sparkles size={14} /> AI Summarize
-          </button>
         </div>
 
         <div className="flex-1 overflow-y-auto p-4 space-y-4 pb-24">
@@ -904,23 +818,6 @@ const TripSyncUltimate = () => {
              <Send size={18} />
            </button>
         </div>
-
-        {/* AI Summary Modal */}
-        {aiSummary && (
-          <div className="absolute inset-0 bg-black/50 z-30 flex items-center justify-center p-6 backdrop-blur-sm animate-fade-in">
-            <div className="bg-white rounded-3xl p-6 w-full max-w-sm shadow-2xl space-y-4">
-               <div className="flex justify-between items-center">
-                 <div className="flex items-center gap-2 text-purple-600 font-bold">
-                   <Bot size={20} /> AI Summary
-                 </div>
-                 <button onClick={() => setAiSummary(null)} className="p-1 hover:bg-gray-100 rounded-full"><X size={20} /></button>
-               </div>
-               <div className="bg-purple-50 p-4 rounded-xl text-sm text-gray-700 leading-relaxed whitespace-pre-wrap">
-                 {aiSummary}
-               </div>
-            </div>
-          </div>
-        )}
       </div>
     );
 
