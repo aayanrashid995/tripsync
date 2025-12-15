@@ -1,6 +1,4 @@
-Here is the updated README with all emojis removed for a cleaner, professional look.
 
------
 
 # TripSync
 
