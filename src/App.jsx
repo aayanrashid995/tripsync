@@ -22,59 +22,48 @@ import {
 
 /**
  * ------------------------------------------------------------------
- * 1. CONFIGURATION & ENVIRONMENT HELPERS
+ * 1. CONFIGURATION (Direct Env Access for Vite)
  * ------------------------------------------------------------------
  */
 
 const USE_FIREBASE = true; 
 
-// Robust helper to safely get Env Vars without crashing the build
-const getEnv = (key) => {
-  try {
-    // @ts-ignore
-    if (typeof import.meta !== 'undefined' && import.meta.env) {
-      // @ts-ignore
-      return import.meta.env[key] || '';
-    }
-  } catch (e) {
-    console.warn('Environment variable access failed:', e);
-  }
-  return '';
-};
-
-// FIREBASE INIT
+// We must access import.meta.env.VITE_* directly so Vite can replace them at build time.
 const FIREBASE_CONFIG = {
-  apiKey: getEnv('VITE_FIREBASE_API_KEY'),
-  authDomain: getEnv('VITE_FIREBASE_AUTH_DOMAIN'),
-  projectId: getEnv('VITE_FIREBASE_PROJECT_ID'),
-  storageBucket: getEnv('VITE_FIREBASE_STORAGE_BUCKET'),
-  messagingSenderId: getEnv('VITE_FIREBASE_MESSAGING_SENDER_ID'),
-  appId: getEnv('VITE_FIREBASE_APP_ID')
+  apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
+  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
+  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
+  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
+  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
+  appId: import.meta.env.VITE_FIREBASE_APP_ID
 };
 
 let db, auth, storage;
 if (USE_FIREBASE) {
   try {
-    const app = !getApps().length ? initializeApp(FIREBASE_CONFIG) : getApp();
-    db = getFirestore(app);
-    auth = getAuth(app);
-    storage = getStorage(app);
+    // Only initialize if the API key is present
+    if (FIREBASE_CONFIG.apiKey) {
+      const app = !getApps().length ? initializeApp(FIREBASE_CONFIG) : getApp();
+      db = getFirestore(app);
+      auth = getAuth(app);
+      storage = getStorage(app);
+    } else {
+      console.warn("⚠️ Firebase keys missing. Login will not work.");
+    }
   } catch (error) {
-    console.warn("Firebase initialized in mock mode (Build step).");
+    console.error("Firebase Initialization Error:", error);
   }
 }
 
 /**
  * ------------------------------------------------------------------
- * 2. BOOKING.COM SERVICE (With Failsafe & Links)
+ * 2. BOOKING.COM SERVICE
  * ------------------------------------------------------------------
  */
 
-// MOCK DATA GENERATOR (Used if API Key is missing or fails)
 const getMockHotels = (locationName) => {
   const isThai = locationName.toLowerCase().includes('thai') || locationName.toLowerCase().includes('bangkok');
   
-  // Real links to Booking.com pages for demo purposes
   if (isThai) {
     return [
       { id: 101, name: "Grand Hyatt Erawan Bangkok", price: "180", rating: 9.1, image: "https://images.unsplash.com/photo-1582719508461-905c673771fd?auto=format&fit=crop&w=800&q=80", url: "https://www.booking.com/hotel/th/grand-hyatt-erawan-bangkok.en-gb.html", amenities: "Pool, Spa" },
@@ -90,14 +79,13 @@ const getMockHotels = (locationName) => {
 };
 
 const BookingService = {
-  apiKey: getEnv('VITE_RAPIDAPI_KEY'), 
+  apiKey: import.meta.env.VITE_RAPIDAPI_KEY, 
   host: "booking-com.p.rapidapi.com",
 
   async searchHotels(locationName) {
-    // 1. FAILSAFE: If no key, return mock data immediately
     if (!this.apiKey) {
       console.warn("⚠️ No Booking API Key. Returning Mock Data.");
-      await new Promise(r => setTimeout(r, 800)); // Fake loading
+      await new Promise(r => setTimeout(r, 800)); 
       return getMockHotels(locationName);
     }
 
@@ -116,7 +104,7 @@ const BookingService = {
       const destId = locData[0].dest_id;
       const searchType = locData[0].dest_type;
 
-      // Step B: Get Hotels (With Date Fix for 422 Errors)
+      // Step B: Get Hotels (Dates fixed to avoid 422 error)
       const d1 = new Date();
       d1.setDate(d1.getDate() + 1); // Start Tomorrow
       const arrivalDate = d1.toISOString().split('T')[0];
@@ -133,7 +121,7 @@ const BookingService = {
       if (!searchResp.ok) throw new Error(`Search API Error: ${searchResp.status}`);
       const searchData = await searchResp.json();
       
-      if (!searchData.result) return getMockHotels(locationName); // Fallback if empty
+      if (!searchData.result) return getMockHotels(locationName); 
 
       // Transform Real Data
       return searchData.result.map(h => ({
@@ -142,12 +130,11 @@ const BookingService = {
         price: h.composite_price_breakdown?.gross_amount?.value?.toFixed(0) || "Check Price",
         rating: h.review_score || "N/A",
         image: h.max_photo_url || "https://via.placeholder.com/300",
-        url: h.url, // This is the direct link to Booking.com
+        url: h.url, 
         amenities: "Free Wifi"
       }));
 
     } catch (error) {
-      // 2. FAILSAFE: If API crashes (403, 429, etc), return mock data
       console.error("⚠️ Real API Failed (Using Fallback):", error);
       return getMockHotels(locationName);
     }
@@ -179,6 +166,7 @@ const StorageService = {
         name: user.displayName || user.email.split('@')[0] 
       };
     } else {
+      console.error("Auth object is undefined. Check Firebase keys.");
       throw new Error("Google Login requires Firebase to be enabled.");
     }
   },
