@@ -20,7 +20,7 @@ import {
   Camera, FileText, ThumbsUp, MessageSquare, ExternalLink
 } from 'lucide-react';
 
-/** 
+/**
  * ------------------------------------------------------------------
  * 1. CONFIGURATION & ENVIRONMENT HELPERS
  * ------------------------------------------------------------------
