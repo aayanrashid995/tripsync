@@ -17,26 +17,40 @@ import {
   Users, Plus, LogOut, Share2, DollarSign, Check, 
   Clock, Trash2, ChevronLeft, Send, Home, Hotel,
   X, AlertCircle, Sparkles, Pencil, MoreVertical, 
-  Camera, FileText, ThumbsUp, MessageSquare, ExternalLink
+  Camera, FileText, ThumbsUp, MessageSquare, ExternalLink,
+  Bot
 } from 'lucide-react';
 
 /**
  * ------------------------------------------------------------------
- * CONFIGURATION & SERVICES
+ * 1. CONFIGURATION & ENVIRONMENT HELPERS
  * ------------------------------------------------------------------
  */
 
-// 1. FIREBASE CONFIGURATION
-// Even if hosted elsewhere, we still need these to talk to the database.
 const USE_FIREBASE = true; 
 
+// Robust helper to safely get Env Vars without crashing the build
+const getEnv = (key) => {
+  try {
+    // @ts-ignore
+    if (typeof import.meta !== 'undefined' && import.meta.env) {
+      // @ts-ignore
+      return import.meta.env[key] || '';
+    }
+  } catch (e) {
+    console.warn('Environment variable access failed:', e);
+  }
+  return '';
+};
+
+// FIREBASE INIT
 const FIREBASE_CONFIG = {
-  apiKey: "AIzaSyCJEM5LnHWwSY5fkvHx0OxPYgwtDELDkYI",
-  authDomain: "tripsync-20dac.firebaseapp.com",
-  projectId: "tripsync-20dac",
-  storageBucket: "tripsync-20dac.firebasestorage.app",
-  messagingSenderId: "454918524328",
-  appId: "1:454918524328:web:7bb09fb6534580821ca19d"
+  apiKey: getEnv('VITE_FIREBASE_API_KEY'),
+  authDomain: getEnv('VITE_FIREBASE_AUTH_DOMAIN'),
+  projectId: getEnv('VITE_FIREBASE_PROJECT_ID'),
+  storageBucket: getEnv('VITE_FIREBASE_STORAGE_BUCKET'),
+  messagingSenderId: getEnv('VITE_FIREBASE_MESSAGING_SENDER_ID'),
+  appId: getEnv('VITE_FIREBASE_APP_ID')
 };
 
 let db, auth, storage;
@@ -47,67 +61,105 @@ if (USE_FIREBASE) {
     auth = getAuth(app);
     storage = getStorage(app);
   } catch (error) {
-    console.error("Firebase Initialization Error:", error);
+    console.warn("Firebase initialized in mock mode (Build step).");
   }
 }
 
-// 2. BOOKING.COM SERVICE (Updated with your Key)
+/**
+ * ------------------------------------------------------------------
+ * 2. ROBUST SERVICES (Booking.com & Gemini AI)
+ * ------------------------------------------------------------------
+ */
+
+// MOCK DATA GENERATOR (Used as Failsafe)
+const getMockHotels = (locationName) => {
+  const isThai = locationName.toLowerCase().includes('thai') || locationName.toLowerCase().includes('bangkok');
+  if (isThai) {
+    return [
+      { id: 101, name: "Grand Hyatt Erawan Bangkok", price: "180", rating: 9.1, image: "https://images.unsplash.com/photo-1582719508461-905c673771fd?auto=format&fit=crop&w=800&q=80", url: "#", amenities: "Pool, Spa" },
+      { id: 102, name: "Sala Rattanakosin", price: "120", rating: 8.8, image: "https://images.unsplash.com/photo-1520250497591-112f2f40a3f4?auto=format&fit=crop&w=800&q=80", url: "#", amenities: "River View" },
+      { id: 103, name: "The Siam Hotel", price: "250", rating: 9.5, image: "https://images.unsplash.com/photo-1566073771259-6a8506099945?auto=format&fit=crop&w=800&q=80", url: "#", amenities: "Luxury" },
+    ];
+  }
+  return [
+    { id: 1, name: `Grand Plaza ${locationName}`, price: "150", rating: 8.5, image: "https://images.unsplash.com/photo-1566073771259-6a8506099945?auto=format&fit=crop&w=800&q=80", url: "#" },
+    { id: 2, name: `${locationName} City Inn`, price: "95", rating: 7.9, image: "https://images.unsplash.com/photo-1520250497591-112f2f40a3f4?auto=format&fit=crop&w=800&q=80", url: "#" },
+    { id: 3, name: "Sunset Resort", price: "210", rating: 9.2, image: "https://images.unsplash.com/photo-1582719508461-905c673771fd?auto=format&fit=crop&w=800&q=80", url: "#" },
+  ];
+};
+
 const BookingService = {
-  apiKey: "0af2786de3mshc527137cebb85c0p12b98ejsn3b6ed5e76460", 
+  apiKey: getEnv('VITE_RAPIDAPI_KEY'), 
   host: "booking-com.p.rapidapi.com",
 
   async searchHotels(locationName) {
+    // 1. FAILSAFE: If no key, return mock data immediately
+    if (!this.apiKey) {
+      console.warn("⚠️ No Booking API Key. Returning Mock Data.");
+      await new Promise(r => setTimeout(r, 800)); // Fake loading
+      return getMockHotels(locationName);
+    }
+
     try {
-      // 1. Fetch Location ID
-      const locationResponse = await fetch(`https://${this.host}/v1/hotels/locations?name=${locationName}&locale=en-gb`, {
+      // Step A: Get Location ID
+      const locationResp = await fetch(`https://${this.host}/v1/hotels/locations?name=${locationName}&locale=en-gb`, {
         method: 'GET',
         headers: { 'X-RapidAPI-Key': this.apiKey, 'X-RapidAPI-Host': this.host }
       });
-      const locationData = await locationResponse.json();
-      
-      if (!locationData || locationData.length === 0) throw new Error("Location not found");
-      
-      const destId = locationData[0].dest_id;
-      const searchType = locationData[0].dest_type;
 
-      // 2. Fetch Hotels
+      if (!locationResp.ok) throw new Error(`Location API Error: ${locationResp.status}`);
+      const locData = await locationResp.json();
+      
+      if (!locData || locData.length === 0) throw new Error("Location not found");
+
+      const destId = locData[0].dest_id;
+      const searchType = locData[0].dest_type;
+
+      // Step B: Get Hotels
       const today = new Date().toISOString().split('T')[0];
       const nextWeek = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
 
-      const searchResponse = await fetch(`https://${this.host}/v1/hotels/search?dest_id=${destId}&search_type=${searchType}&arrival_date=${today}&departure_date=${nextWeek}&adults_number=2&room_number=1&units=metric&order_by=popularity&filter_by_currency=USD&locale=en-gb`, {
+      const searchResp = await fetch(`https://${this.host}/v1/hotels/search?dest_id=${destId}&search_type=${searchType}&arrival_date=${today}&departure_date=${nextWeek}&adults_number=2&room_number=1&units=metric&order_by=popularity&filter_by_currency=USD&locale=en-gb`, {
         method: 'GET',
         headers: { 'X-RapidAPI-Key': this.apiKey, 'X-RapidAPI-Host': this.host }
       });
-      const searchData = await searchResponse.json();
 
-      if (!searchData.result) return [];
+      if (!searchResp.ok) throw new Error(`Search API Error: ${searchResp.status}`);
+      const searchData = await searchResp.json();
+      
+      if (!searchData.result) return getMockHotels(locationName); // Fallback if empty
 
-      return searchData.result.map(hotel => ({
-        id: hotel.hotel_id,
-        name: hotel.hotel_name,
-        price: hotel.price_breakdown?.gross_price || "Check Price",
-        rating: hotel.review_score,
-        image: hotel.max_photo_url,
-        url: hotel.url,
-        amenities: "Free Wifi" // API often doesn't give simple amenities list in search
+      // Transform Real Data
+      return searchData.result.map(h => ({
+        id: h.hotel_id,
+        name: h.hotel_name,
+        price: h.composite_price_breakdown?.gross_amount?.value?.toFixed(0) || "Check Price",
+        rating: h.review_score || "N/A",
+        image: h.max_photo_url || "https://via.placeholder.com/300",
+        url: h.url,
+        amenities: "Free Wifi"
       }));
 
     } catch (error) {
-      console.error("Booking API Error:", error);
-      // Fallback data if API quota exceeded or error
-      return [
-        { id: 1, name: "Mock Hotel 1 (API Error)", price: 100, rating: 8.0, image: "https://images.unsplash.com/photo-1566073771259-6a8506099945", url: "#" }
-      ];
+      // 2. FAILSAFE: If API crashes (403, 429, etc), return mock data
+      console.error("⚠️ Real API Failed (Using Fallback):", error);
+      return getMockHotels(locationName);
     }
   }
 };
 
-// 3. GEMINI AI SERVICE
 const GeminiService = {
   async generateItinerary(destination, days = 3) {
-    const apiKey = ""; 
+    const apiKey = getEnv('VITE_GEMINI_API_KEY'); 
+    
+    if (!apiKey) {
+        console.warn("Gemini API Key missing");
+        return [];
+    }
+
+    // Strict JSON prompt
     const systemPrompt = `You are a travel assistant. Create a fun, realistic ${days}-day itinerary for ${destination}. 
-    Return strictly a JSON array of objects. Each object must have: 
+    Return strictly a JSON array of objects. Do not wrap in markdown code blocks. Each object must have: 
     - "title" (short activity name)
     - "time" (e.g. "10:00 AM")
     - "description" (one sentence detail)
@@ -115,40 +167,52 @@ const GeminiService = {
     Generate about 2-3 activities per day.`;
 
     try {
-      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`, {
+      // Using Stable Model 'gemini-1.5-flash'
+      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ contents: [{ parts: [{ text: systemPrompt }] }] })
       });
+      
+      if (!response.ok) throw new Error(`Gemini API Error: ${response.status}`);
+
       const data = await response.json();
-      const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
-      return JSON.parse(text.replace(/```json|```/g, '').trim());
+      let text = data.candidates?.[0]?.content?.parts?.[0]?.text || "[]";
+      
+      // Sanitizing response to ensure valid JSON
+      text = text.replace(/```json/g, '').replace(/```/g, '').trim();
+      return JSON.parse(text);
     } catch (error) {
-      throw new Error("Failed to generate itinerary.");
+      console.error("Gemini Error:", error);
+      throw new Error("Failed to generate itinerary. Check API Key.");
     }
   },
 
   async summarizeChat(messages) {
+    const apiKey = getEnv('VITE_GEMINI_API_KEY'); 
     if (messages.length === 0) return "No messages to summarize.";
-    const apiKey = ""; 
+    if (!apiKey) return "AI Summary unavailable (Key missing)";
+
     const chatLog = messages.map(m => `${m.senderName}: ${m.text}`).join("\n");
-    const prompt = `Summarize the following group chat travel plans and key decisions in 3 bullet points:\n\n${chatLog}`;
+    const prompt = `You are a travel assistant reading a group chat. Summarize the key travel plans, decisions, and action items in 3 short bullet points. Do not use markdown formatting like ** or *. Just plain text bullets.\n\n${chatLog}`;
 
     try {
-      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`, {
+      // Using Stable Model 'gemini-1.5-flash'
+      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] })
       });
+      
       const data = await response.json();
       return data.candidates?.[0]?.content?.parts?.[0]?.text;
     } catch (error) {
-      throw new Error("Failed to summarize chat.");
+      console.error("Gemini Summary Error:", error);
+      return "Unable to summarize at this time.";
     }
   }
 };
 
-// 4. STORAGE SERVICE
 const StorageService = {
   // --- AUTH ---
   async login(email, password) {
@@ -199,10 +263,9 @@ const StorageService = {
       await uploadBytes(storageRef, file);
       return await getDownloadURL(storageRef);
     } else {
-      // Fake upload for local mode
       return new Promise(resolve => {
         const reader = new FileReader();
-        reader.onloadend = () => resolve(reader.result); // Base64 for demo
+        reader.onloadend = () => resolve(reader.result); 
         reader.readAsDataURL(file);
       });
     }
@@ -341,7 +404,7 @@ const StorageService = {
   }
 };
 
-// ... (Components: Toast, LoadingSpinner remain same) ...
+// ... (Components) ...
 const Toast = ({ message, type, onClose }) => {
   useEffect(() => { const t = setTimeout(onClose, 3000); return () => clearTimeout(t); }, [onClose]);
   const bg = type === 'error' ? 'bg-red-500' : 'bg-green-500';
@@ -371,7 +434,7 @@ const TripSyncUltimate = () => {
 
   const showToast = (message, type = 'success') => setToast({ message, type });
 
-  // ... (AuthScreen, Dashboard remain same) ...
+  // ... (AuthScreen) ...
   const AuthScreen = () => {
     const [isLogin, setIsLogin] = useState(true);
     const [formData, setFormData] = useState({ name: '', email: '', password: '' });
@@ -417,7 +480,6 @@ const TripSyncUltimate = () => {
             <button type="submit" disabled={loading} className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 rounded-xl transition-all flex items-center justify-center gap-2">{loading ? <LoadingSpinner /> : (isLogin ? 'Sign In' : 'Create Account')}</button>
           </form>
           
-          {/* Google Login Button */}
           <button 
             type="button"
             onClick={handleGoogleLogin} 
@@ -435,7 +497,7 @@ const TripSyncUltimate = () => {
 
   const Dashboard = () => {
     const [trips, setTrips] = useState([]);
-    const [modal, setModal] = useState(null); // 'create' or 'join'
+    const [modal, setModal] = useState(null); 
     const [formData, setFormData] = useState({ title: '', destination: '', startDate: '', endDate: '', joinCode: '' });
 
     useEffect(() => { if (user) return StorageService.subscribeToTrips(user.uid, setTrips); }, [user]);
@@ -533,6 +595,11 @@ const TripSyncUltimate = () => {
     const [loadingHotel, setLoadingHotel] = useState(false);
     const [expandedActivity, setExpandedActivity] = useState(null);
     const [commentText, setCommentText] = useState('');
+    
+    // Chat States
+    const [newMessage, setNewMessage] = useState('');
+    const [aiSummary, setAiSummary] = useState(null);
+    const chatEndRef = useRef(null);
 
     useEffect(() => {
       const unsub1 = StorageService.subscribeToSubCollection("expenses", activeTrip.id, setExpenses);
@@ -540,6 +607,12 @@ const TripSyncUltimate = () => {
       const unsub3 = StorageService.subscribeToSubCollection("itinerary", activeTrip.id, (d) => setItinerary(d.sort((a,b) => a.day - b.day || a.time.localeCompare(b.time))));
       return () => { unsub1(); unsub2(); unsub3(); };
     }, []);
+
+    useEffect(() => {
+      if (tab === 'chat' && chatEndRef.current) {
+        chatEndRef.current.scrollIntoView({ behavior: 'smooth' });
+      }
+    }, [messages, tab]);
 
     // --- ACTIONS ---
     const handleAddExpense = async () => {
@@ -572,7 +645,6 @@ const TripSyncUltimate = () => {
       setCommentText('');
     };
 
-    // MODIFIED: Use BookingService instead of GeminiService
     const handleFindHotels = async () => {
       setLoadingHotel(true);
       try {
@@ -582,6 +654,33 @@ const TripSyncUltimate = () => {
         showToast("Could not fetch hotels", "error");
       } finally {
         setLoadingHotel(false);
+      }
+    };
+
+    const handleSendMessage = async () => {
+      if (!newMessage.trim()) return;
+      try {
+        await StorageService.addItem("messages", {
+          tripId: activeTrip.id,
+          text: newMessage,
+          senderId: user.uid,
+          senderName: user.name,
+        });
+        setNewMessage('');
+      } catch (e) {
+        showToast("Failed to send", "error");
+      }
+    };
+
+    const handleGenerateSummary = async () => {
+      setLoading(true);
+      try {
+        const summary = await GeminiService.summarizeChat(messages);
+        setAiSummary(summary);
+      } catch (e) {
+        showToast("Summary failed", "error");
+      } finally {
+        setLoading(false);
       }
     };
 
@@ -711,7 +810,7 @@ const TripSyncUltimate = () => {
                   </div>
                 </div>
                 <div className="text-right">
-                  <div className="font-bold text-gray-900">${exp.amount}</div>
+                  <div className="font-bold text-lg text-gray-900">${exp.amount}</div>
                   {exp.receiptUrl && <a href={exp.receiptUrl} target="_blank" className="text-xs text-blue-600 underline">View Receipt</a>}
                 </div>
               </div>
@@ -760,6 +859,66 @@ const TripSyncUltimate = () => {
       </div>
     );
 
+    const ChatTab = () => (
+      <div className="flex flex-col h-[calc(100vh-140px)] bg-gray-50 relative">
+        <div className="flex justify-between items-center p-4 bg-white border-b border-gray-100 sticky top-0 z-10">
+          <h2 className="font-bold text-lg">Group Chat</h2>
+          <button onClick={handleGenerateSummary} className="bg-purple-100 text-purple-600 px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1">
+            <Sparkles size={14} /> AI Summarize
+          </button>
+        </div>
+
+        <div className="flex-1 overflow-y-auto p-4 space-y-4 pb-24">
+          {messages.length === 0 && (
+            <div className="text-center text-gray-400 py-10 text-sm">No messages yet. Start the conversation!</div>
+          )}
+          {messages.map((msg) => {
+            const isMe = msg.senderId === user.uid;
+            return (
+              <div key={msg.id} className={`flex flex-col ${isMe ? 'items-end' : 'items-start'}`}>
+                <div className={`max-w-[80%] p-3 rounded-2xl text-sm ${isMe ? 'bg-blue-600 text-white rounded-br-none' : 'bg-white border border-gray-200 rounded-bl-none'}`}>
+                  {!isMe && <div className="text-[10px] font-bold text-gray-500 mb-1">{msg.senderName}</div>}
+                  {msg.text}
+                </div>
+                <div className="text-[10px] text-gray-400 mt-1">{new Date(msg.createdAt).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</div>
+              </div>
+            );
+          })}
+          <div ref={chatEndRef} />
+        </div>
+
+        <div className="fixed bottom-[65px] left-0 right-0 p-3 bg-white border-t border-gray-200 flex gap-2 z-20">
+           <input 
+             className="flex-1 bg-gray-100 rounded-full px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-100" 
+             placeholder="Type a message..." 
+             value={newMessage}
+             onChange={(e) => setNewMessage(e.target.value)}
+             onKeyDown={(e) => e.key === 'Enter' && handleSendMessage()}
+           />
+           <button onClick={handleSendMessage} className="bg-blue-600 text-white p-2 rounded-full hover:bg-blue-700">
+             <Send size={18} />
+           </button>
+        </div>
+
+        {/* AI Summary Modal */}
+        {aiSummary && (
+          <div className="absolute inset-0 bg-black/50 z-30 flex items-center justify-center p-6 backdrop-blur-sm animate-fade-in">
+            <div className="bg-white rounded-3xl p-6 w-full max-w-sm shadow-2xl space-y-4">
+               <div className="flex justify-between items-center">
+                 <div className="flex items-center gap-2 text-purple-600 font-bold">
+                   <Bot size={20} /> AI Summary
+                 </div>
+                 <button onClick={() => setAiSummary(null)} className="p-1 hover:bg-gray-100 rounded-full"><X size={20} /></button>
+               </div>
+               <div className="bg-purple-50 p-4 rounded-xl text-sm text-gray-700 leading-relaxed whitespace-pre-wrap">
+                 {aiSummary}
+               </div>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+
     return (
       <div className="min-h-screen bg-gray-50">
         <div className="bg-white border-b border-gray-100 p-4 sticky top-0 z-10 flex items-center justify-between">
@@ -771,7 +930,7 @@ const TripSyncUltimate = () => {
         {tab === 'timeline' && <TimelineTab />}
         {tab === 'expenses' && <ExpensesTab />}
         {tab === 'hotels' && <HotelsTab />}
-        {tab === 'chat' && <div className="p-4 text-center text-gray-500 mt-10">Chat feature coming soon</div>}
+        {tab === 'chat' && <ChatTab />}
 
         {/* BOTTOM NAV */}
         <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 px-6 py-3 flex justify-between items-center z-40 pb-safe">
