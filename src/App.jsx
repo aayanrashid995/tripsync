@@ -115,26 +115,16 @@ const BookingService = {
       const destId = locData[0].dest_id;
       const searchType = locData[0].dest_type;
 
-     // Step B: Get Hotels
-      // OLD CODE (Causing 422 error):
-      // const today = new Date().toISOString().split('T')[0];
-      // const nextWeek = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
-
-      // NEW FIXED CODE (Safe Dates):
+      // Step B: Get Hotels (With Date Fix for 422 Errors)
       const d1 = new Date();
-      d1.setDate(d1.getDate() + 1); // Start Tomorrow (Safe from timezone issues)
+      d1.setDate(d1.getDate() + 1); // Start Tomorrow
       const arrivalDate = d1.toISOString().split('T')[0];
 
       const d2 = new Date();
-      d2.setDate(d2.getDate() + 4); // Stay for 3 days
+      d2.setDate(d2.getDate() + 4); // Stay 3 days
       const departureDate = d2.toISOString().split('T')[0];
 
       const searchResp = await fetch(`https://${this.host}/v1/hotels/search?dest_id=${destId}&search_type=${searchType}&arrival_date=${arrivalDate}&departure_date=${departureDate}&adults_number=2&room_number=1&units=metric&order_by=popularity&filter_by_currency=USD&locale=en-gb`, {
-        method: 'GET',
-        headers: { 'X-RapidAPI-Key': this.apiKey, 'X-RapidAPI-Host': this.host }
-      });
-
-      const searchResp = await fetch(`https://${this.host}/v1/hotels/search?dest_id=${destId}&search_type=${searchType}&arrival_date=${today}&departure_date=${nextWeek}&adults_number=2&room_number=1&units=metric&order_by=popularity&filter_by_currency=USD&locale=en-gb`, {
         method: 'GET',
         headers: { 'X-RapidAPI-Key': this.apiKey, 'X-RapidAPI-Host': this.host }
       });
